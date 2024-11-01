@@ -49,4 +49,6 @@
 #include <xarm_msgs/srv/linear_track_back_origin.hpp>
 #include <xarm_msgs/srv/linear_track_set_pos.hpp>
 
+#include <xarm_msgs/msg/move_joint.hpp>
+
 #endif // __XARM_MSGS_H

@@ -152,8 +152,17 @@ namespace xarm_api
         
         // MoveJoint
         service_set_servo_angle_ = _create_service<xarm_msgs::srv::MoveJoint>("set_servo_angle", &XArmDriver::_set_servo_angle);
-        service_set_servo_angle_j_ = _create_service<xarm_msgs::srv::MoveJoint>("set_servo_angle_j", &XArmDriver::_set_servo_angle_j);
-        
+        // service_set_servo_angle_j_ = _create_service<xarm_msgs::srv::MoveJoint, std::function<bool(const std::shared_ptr<xarm_msgs::srv::MoveJoint::Request> req, std::shared_ptr<xarm_msgs::srv::MoveJoint::Response> res)>>
+        //         ("set_servo_angle_j", &XArmDriver::_set_servo_angle_j);
+        sub_set_servo_angle_j_ = hw_node_->create_subscription<xarm_msgs::msg::MoveJoint>(
+            "set_servo_angle_j_sub", 
+            rclcpp::QoS(rclcpp::KeepLast(1)).durability_volatile().best_effort(),
+            std::bind(&XArmDriver::_set_servo_angle_j_cb,
+                this,
+                std::placeholders::_1
+            )
+        );
+
         // MoveCircle
         service_move_circle_ = _create_service<xarm_msgs::srv::MoveCircle>("move_circle", &XArmDriver::_move_circle);
         
@@ -993,6 +1002,18 @@ namespace xarm_api
         }
         res->ret = arm->set_servo_angle_j(angles, req->speed, req->acc, req->mvtime);
         return true;
+    }
+
+    void XArmDriver::_set_servo_angle_j_cb(const std::shared_ptr<xarm_msgs::msg::MoveJoint> req)
+    {
+        if (req->angles.size() < dof_) {
+            return;
+        }
+        float angles[7] = { 0 };
+        for (int i = 0; i < std::min((int)req->angles.size(), 7); i++) {
+            angles[i] = req->angles[i];
+        }
+        arm->set_servo_angle_j(angles, req->speed, req->acc, req->mvtime);
     }
 
     bool XArmDriver::_move_circle(const std::shared_ptr<xarm_msgs::srv::MoveCircle::Request> req, std::shared_ptr<xarm_msgs::srv::MoveCircle::Response> res)

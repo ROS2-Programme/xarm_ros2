@@ -335,7 +335,10 @@ namespace xarm_api
         rclcpp::Service<xarm_msgs::srv::MoveJoint>::SharedPtr service_set_servo_angle_j_;
         bool _set_servo_angle(const std::shared_ptr<xarm_msgs::srv::MoveJoint::Request> req, std::shared_ptr<xarm_msgs::srv::MoveJoint::Response> res);
         bool _set_servo_angle_j(const std::shared_ptr<xarm_msgs::srv::MoveJoint::Request> req, std::shared_ptr<xarm_msgs::srv::MoveJoint::Response> res);
-
+        
+        rclcpp::Subscription<xarm_msgs::msg::MoveJoint>::SharedPtr sub_set_servo_angle_j_;
+        void _set_servo_angle_j_cb(const std::shared_ptr<xarm_msgs::msg::MoveJoint> req);    
+            
         // MoveCircle
         rclcpp::Service<xarm_msgs::srv::MoveCircle>::SharedPtr service_move_circle_;
         bool _move_circle(const std::shared_ptr<xarm_msgs::srv::MoveCircle::Request> req, std::shared_ptr<xarm_msgs::srv::MoveCircle::Response> res);
