@@ -53,6 +53,8 @@ namespace uf_robot_hardware
         node_ = rclcpp::Node::make_shared("ufactory_driver", node_options);
         hw_node_ = rclcpp::Node::make_shared("ufactory_robot_hw", node_options);
 
+        update_goal_state_pub_ = hw_node_->create_publisher<std_msgs::msg::Empty>("/rviz/moveit/update_goal_state", 1);
+
         std::thread th([this]() -> void {
             rclcpp::spin(node_);
             rclcpp::shutdown();
@@ -150,7 +152,10 @@ namespace uf_robot_hardware
         RCLCPP_INFO(LOGGER, "[%s] dof: %d, velocity_control: %d, add_gripper: %d, add_bio_gripper: %d, baud_checkset: %d, default_gripper_baud: %d", 
             robot_ip_.c_str(), dof, velocity_control_, add_gripper, add_bio_gripper, baud_checkset, default_gripper_baud);
         
-        xarm_driver_.init(node_, robot_ip_);
+        // 20250318, disable xarm_driver publish joint_states
+        xarm_driver_.init(node_, robot_ip_, true);
+        // 20250318, get joint_states msg reference from xarm_driver
+        joint_state_msg_ = xarm_driver_.get_joint_states();
     }
 
     CallbackReturn UFRobotSystemHardware::on_init(const hardware_interface::HardwareInfo& info)
@@ -164,7 +169,7 @@ namespace uf_robot_hardware
         write_code_ = 0;
 
         initialized_ = false;
-        reload_controller_ = false;
+        reactivate_controller_later_ = false;
 
         read_cnts_ = 0;
         read_max_time_ = 0;
@@ -319,13 +324,22 @@ namespace uf_robot_hardware
 					// effort_states_[j] = 0.0;
 				}
             }
+
+            // 20250318, update joint_states msg and publish
+            joint_state_msg_->header.stamp = curr_read_time_;
+            for(int i = 0; i < joint_state_msg_->position.size(); i++)
+            {
+                joint_state_msg_->position[i] = position_states_[i];
+                joint_state_msg_->velocity[i] = velocity_states_[i];
+                if (use_new)
+                    joint_state_msg_->effort[i] = (double)curr_read_effort_[i];
+            }
+            xarm_driver_.pub_joint_state(*joint_state_msg_);
+
             if (!initialized_) {
                 for (uint i = 0; i < position_states_.size(); i++) {
                     position_cmds_[i] = position_states_[i];
                     velocity_cmds_[i] = 0.0;
-                }
-                if (reload_controller_ && _check_cmds_is_change(curr_read_position_, prev_read_position_)) {
-                    _reload_controller();
                 }
             }
             memcpy(prev_read_position_, curr_read_position_, sizeof(float) * 7);
@@ -350,12 +364,16 @@ namespace uf_robot_hardware
     hardware_interface::return_type UFRobotSystemHardware::write(const rclcpp::Time & time, const rclcpp::Duration &period)
     {
         if (_need_reset()) {
-            if (initialized_) reload_controller_ = true;
             initialized_ = false;
+            _deactivate_controller();
             return hardware_interface::return_type::OK;
         }
         initialized_ = true;
-        
+        if(reactivate_controller_later_)
+        {
+            _activate_controller();
+            reactivate_controller_later_ = false;
+        }
         // std::string pos_str = "[ ";
         // std::string vel_str = "[ ";
         // for (int i = 0; i < position_cmds_.size(); i++) { 
@@ -402,21 +420,49 @@ namespace uf_robot_hardware
         return hardware_interface::return_type::OK;
     }
 
-    void UFRobotSystemHardware::_reload_controller(void) {
+    void UFRobotSystemHardware::_deactivate_controller(void) {
+        if(reactivate_controller_later_)
+            return;
+        // RCLCPP_INFO(LOGGER, "DEACTIVATE CONTROLLER!! ");
         int ret = _call_request(client_list_controller_, req_list_controller_, res_list_controller_);
+        bool valid_operation = false;
         if (ret == 0 && res_list_controller_->controller.size() > 0) {
-            req_switch_controller_->start_controllers.resize(res_list_controller_->controller.size());
-            req_switch_controller_->stop_controllers.resize(res_list_controller_->controller.size());
+            req_switch_controller_->activate_controllers.resize(0);
+            req_switch_controller_->deactivate_controllers.resize(res_list_controller_->controller.size());
             for (uint i = 0; i < res_list_controller_->controller.size(); i++) {
-                req_switch_controller_->start_controllers[i] = res_list_controller_->controller[i].name;
-                req_switch_controller_->stop_controllers[i] = res_list_controller_->controller[i].name;
+                // RCLCPP_ERROR(LOGGER, "STATE: %s", res_list_controller_->controller[i].state.c_str());
+                if(res_list_controller_->controller[i].state == std::string("active")){
+                // for situation of initial launch with emg stop pressed, launch file will activate controller and it takes a while
+                    valid_operation = true;
+                }
+                // req_switch_controller_->activate_controllers[i] = res_list_controller_->controller[i].name;
+                req_switch_controller_->deactivate_controllers[i] = res_list_controller_->controller[i].name;
             }
             req_switch_controller_->strictness = controller_manager_msgs::srv::SwitchController::Request::BEST_EFFORT;
+            req_switch_controller_->timeout = rclcpp::Duration::from_seconds(2.0);
+            if(valid_operation)
+            {
+                _call_request(client_switch_controller_, req_switch_controller_, res_switch_controller_);
+                reactivate_controller_later_ = true; // Not setting this indicator until activated controller disabled!
+            }
+        }
+    }
+
+    void UFRobotSystemHardware::_activate_controller(void) {
+        // RCLCPP_INFO(LOGGER, "ACTIVATE CONTROLLER!! ");
+        int ret = _call_request(client_list_controller_, req_list_controller_, res_list_controller_);
+        if (ret == 0 && res_list_controller_->controller.size() > 0) {
+            req_switch_controller_->deactivate_controllers.resize(0);
+            req_switch_controller_->activate_controllers.resize(res_list_controller_->controller.size());
+            for (uint i = 0; i < res_list_controller_->controller.size(); i++) {
+                req_switch_controller_->activate_controllers[i] = res_list_controller_->controller[i].name;
+                // req_switch_controller_->deactivate_controllers[i] = res_list_controller_->controller[i].name;
+            }
+            req_switch_controller_->strictness = controller_manager_msgs::srv::SwitchController::Request::BEST_EFFORT;
+            req_switch_controller_->timeout = rclcpp::Duration::from_seconds(2.0);
             _call_request(client_switch_controller_, req_switch_controller_, res_switch_controller_);
         }
-        if (ret == 0) {
-            reload_controller_ = false;
-        }
+        update_goal_state_pub_->publish(update_goal_state_msg_);
     }
 
     bool UFRobotSystemHardware::_check_cmds_is_change(float *prev, float *cur, double threshold)

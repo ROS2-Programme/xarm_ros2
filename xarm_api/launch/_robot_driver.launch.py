@@ -15,7 +15,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from launch import LaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.launch_description_sources import load_python_launch_file_as_module
+from uf_ros_lib.uf_robot_utils import  generate_robot_api_params
 
 
 def launch_setup(context, *args, **kwargs):
@@ -59,12 +59,11 @@ def launch_setup(context, *args, **kwargs):
     prefix = LaunchConfiguration('prefix', default='')
     baud_checkset = LaunchConfiguration('baud_checkset', default=True)
     default_gripper_baud = LaunchConfiguration('default_gripper_baud', default=2000000)
+    joint_states_rate = LaunchConfiguration('joint_states_rate', default=-1)
     
     show_rviz = LaunchConfiguration('show_rviz', default=False)
     robot_type = LaunchConfiguration('robot_type', default='xarm')
     
-    mod = load_python_launch_file_as_module(os.path.join(get_package_share_directory('xarm_api'), 'launch', 'lib', 'robot_api_lib.py'))
-    generate_robot_api_params = getattr(mod, 'generate_robot_api_params')
     robot_params = generate_robot_api_params(
         os.path.join(get_package_share_directory('xarm_api'), 'config', 'xarm_params.yaml'),
         os.path.join(get_package_share_directory('xarm_api'), 'config', 'xarm_user_params.yaml'),
@@ -90,6 +89,7 @@ def launch_setup(context, *args, **kwargs):
                 'prefix': prefix.perform(context).strip('/'),
                 'baud_checkset': baud_checkset,
                 'default_gripper_baud': default_gripper_baud,
+                'joint_states_rate': joint_states_rate,
             },
         ]
     )
